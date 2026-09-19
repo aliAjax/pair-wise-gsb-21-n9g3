@@ -1,161 +1,96 @@
 import "./styles.css";
+import { useAppState } from "./store";
+import { countDefects, evaluateGate } from "./domain";
+import { CheckItemsPanel } from "./components/CheckItemsPanel";
+import { ReleasePanel } from "./components/ReleasePanel";
+import { OccupancyPanel } from "./components/OccupancyPanel";
 
-const project = {
-  "id": "hxwl-07",
-  "port": 5107,
-  "title": "航空维修检查清单",
-  "subtitle": "按ATA章节推进维修放行前检查",
-  "stack": "React + Vite + TypeScript + CSS",
-  "theme": [
-    "#1d4ed8",
-    "#475569",
-    "#f97316"
-  ],
-  "domain": "航空维修",
-  "users": [
-    "维修工程师",
-    "放行人员",
-    "培训教员"
-  ],
-  "metrics": [
-    "完成率",
-    "缺陷项",
-    "待复核",
-    "ATA章节"
-  ],
-  "filters": [
-    "机体",
-    "动力装置",
-    "航电",
-    "起落架"
-  ],
-  "fields": [
-    "机型",
-    "ATA章节",
-    "检查区域",
-    "检查项目",
-    "缺陷描述",
-    "处理意见",
-    "签署人"
-  ],
-  "records": [
-    [
-      "A320",
-      "ATA 32",
-      "起落架",
-      "待复核",
-      "主轮磨耗接近限制"
-    ],
-    [
-      "B737",
-      "ATA 24",
-      "电源系统",
-      "正常",
-      "电瓶电压检查完成"
-    ],
-    [
-      "ARJ21",
-      "ATA 27",
-      "飞控",
-      "缺陷",
-      "副翼作动测试需复查"
-    ]
-  ]
-};
-
-const statusColors = ["status-ok", "status-watch", "status-danger"];
-
-function MetricCard({ label, value, index }: { label: string; value: string; index: number }) {
+function MetricCard({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  tone: "ok" | "watch" | "danger" | "neutral";
+  hint?: string;
+}) {
   return (
     <article className="metric-card">
       <span>{label}</span>
       <strong>{value}</strong>
-      <i className={statusColors[index % statusColors.length]} />
+      {hint && <em className="metric-hint">{hint}</em>}
+      <i className={`status-${tone}`} />
     </article>
   );
 }
 
 function App() {
-  const values = project.metrics.map((metric: string, index: number) => {
-    const base = [84, 12, 31, 7][index % 4];
-    return String(base + index * 3);
-  });
+  const { state, dispatch } = useAppState();
+  const gate = evaluateGate(state);
+  const counts = countDefects(state);
+  const ataCount = new Set(state.items.map((it) => it.ata)).size;
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">{project.id} · port {project.port}</p>
-          <h1>{project.title}</h1>
-          <p className="subtitle">{project.subtitle}</p>
+          <p className="eyebrow">hxwl-07 · port 5107</p>
+          <h1>航空维修检查清单</h1>
+          <p className="subtitle">
+            按 ATA 章节推进维修放行前检查：每个检查项记录缺陷等级、整改期限与责任工程师；
+            缺陷不关闭、逾期无依据均不得签署放行；关闭后再签保留原签署并生成带原因的新版本；
+            维修车辆机位占用先确认者保留。数据本地持久化，刷新后检查项、缺陷、签署版本与占用仍对应。
+          </p>
         </div>
         <div className="stack-card">
-          <span>技术栈</span>
-          <strong>{project.stack}</strong>
+          <span>闭环规则</span>
+          <strong>缺陷闭环 → 闸门校验 → 签署版本化</strong>
+          <strong>机位占用 → 先到先得 → 冲突驳回</strong>
+          <button
+            className="reset-btn"
+            onClick={() => {
+              if (window.confirm("恢复为演示数据？当前本地修改将被清空。")) {
+                dispatch({ type: "reset_seed" });
+              }
+            }}
+          >
+            恢复演示数据
+          </button>
         </div>
       </section>
 
       <section className="metrics-grid">
-        {project.metrics.map((metric: string, index: number) => (
-          <MetricCard key={metric} label={metric} value={values[index]} index={index} />
-        ))}
+        <MetricCard label="ATA 检查项" value={state.items.length} tone="neutral" hint={`覆盖 ${ataCount} 个 ATA 章节`} />
+        <MetricCard label="未关闭缺陷" value={counts.open} tone={counts.open > 0 ? "danger" : "ok"} hint="存在即禁止放行" />
+        <MetricCard
+          label="逾期缺依据"
+          value={gate.overdueNoBasisRows.length}
+          tone={gate.overdueNoBasisRows.length > 0 ? "watch" : "ok"}
+          hint="须填延期依据"
+        />
+        <MetricCard
+          label="放行版本"
+          value={`V${state.versions[state.versions.length - 1]?.version ?? 0}`}
+          tone={gate.canSign ? "ok" : "danger"}
+          hint={gate.canSign ? "闸门通过" : "闸门未通过"}
+        />
       </section>
 
       <section className="workspace">
-        <aside className="panel narrow">
-          <h2>角色</h2>
-          <div className="chips">
-            {project.users.map((user: string) => (
-              <span key={user}>{user}</span>
-            ))}
-          </div>
-          <h2>筛选</h2>
-          <div className="chips muted">
-            {project.filters.map((filter: string) => (
-              <button key={filter}>{filter}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p>{project.domain}</p>
-              <h2>记录字段</h2>
-            </div>
-            <button className="primary-action">新增记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="records panel">
-        <div className="section-heading">
-          <div>
-            <p>示例数据</p>
-            <h2>近期记录</h2>
-          </div>
-          <button>导出摘要</button>
+        <div className="panel-left">
+          <CheckItemsPanel items={state.items} dispatch={dispatch} />
         </div>
-        <div className="record-list">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")} className="record-card">
-              <div className="record-index">{String(index + 1).padStart(2, "0")}</div>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
+        <div className="panel-right">
+          <ReleasePanel state={state} gate={gate} dispatch={dispatch} />
+          <OccupancyPanel state={state} dispatch={dispatch} />
         </div>
       </section>
+
+      <footer className="page-foot">
+        数据保存在浏览器 localStorage（键 hxwl-07-maintenance-state-v1），签署版本为时刻快照、历史只读。
+      </footer>
     </main>
   );
 }
